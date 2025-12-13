@@ -35,7 +35,7 @@ class MoneyTest {
     void zero_money() {
         Money zero = Money.zero(USD);
 
-        assertEquals(BigDecimal.ZERO, zero.amount());
+        assertEquals(0, zero.amount().compareTo(BigDecimal.ZERO));
         assertEquals(USD, zero.currency());
     }
 
