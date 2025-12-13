@@ -6,13 +6,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.jjenus</groupId>
-    <artifactId>banking-core</artifactId>
+    <artifactId>bank-core</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>Banking Core</name>
-    <description>Pure Java banking core domain library</description>
-    <url>https://github.com/jjenus/banking-core</url>
+    <name>Bank Core</name>
+    <description>Pure Java bank core domain library</description>
+    <url>https://github.com/jjenus/bank-core</url>
 
     <properties>
         <java.version>17</java.version>
@@ -72,7 +72,7 @@
                             <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
                         </manifest>
                         <manifestEntries>
-                            <Implementation-Title>Banking Core</Implementation-Title>
+                            <Implementation-Title>Bank Core</Implementation-Title>
                             <Implementation-Version>${project.version}</Implementation-Version>
                             <Built-By>${user.name}</Built-By>
                             <Built-Date>${maven.build.timestamp}</Built-Date>
@@ -124,9 +124,9 @@
     </licenses>
 
     <scm>
-        <connection>scm:git:https://github.com/jjenus/banking-core.git</connection>
-        <developerConnection>scm:git:https://github.com/jjenus/banking-core.git</developerConnection>
-        <url>https://github.com/jjenus/banking-core</url>
+        <connection>scm:git:https://github.com/jjenus/bank-core.git</connection>
+        <developerConnection>scm:git:https://github.com/jjenus/bank-core.git</developerConnection>
+        <url>https://github.com/jjenus/bank-core</url>
     </scm>
 
     <developers>
