@@ -68,6 +68,27 @@ class AccountTest {
     }
 
     @Test
+    @DisplayName("Deposit to suspended account throws exception")
+    void deposit_toSuspendedAccount_throwsException() {
+        Account suspended = account.suspend();
+        Money depositAmount = Money.of("100.00", USD);
+
+        assertThrows(IllegalStateException.class, () -> suspended.deposit(depositAmount));
+    }
+
+    @Test
+    @DisplayName("Deposit to DORMANT account succeeds")
+    void deposit_toDormantAccount_succeeds() {
+        Account dormant = account.deposit(Money.of("50.00", USD)).markDormant();
+        Money depositAmount = Money.of("100.00", USD);
+
+        Account updated = dormant.deposit(depositAmount);
+
+        assertEquals(0, updated.balance().amount().compareTo(new BigDecimal("150.0000")));
+        assertEquals(AccountStatus.DORMANT, updated.status());  // Status unchanged by deposit; caller emits AccountActivated event separately
+    }
+
+    @Test
     @DisplayName("Withdraw money from account")
     void withdraw_money() {
         // First deposit
@@ -100,6 +121,15 @@ class AccountTest {
     }
 
     @Test
+    @DisplayName("Withdraw from DORMANT account throws exception")
+    void withdraw_fromDormantAccount_throwsException() {
+        Account dormant = account.deposit(Money.of("200.00", USD)).markDormant();
+
+        assertThrows(IllegalStateException.class,
+            () -> dormant.withdraw(Money.of("50.00", USD)));
+    }
+
+    @Test
     @DisplayName("Freeze active account")
     void freeze_account() {
         Account frozen = account.freeze();
@@ -118,6 +148,32 @@ class AccountTest {
     }
 
     @Test
+    @DisplayName("Suspend active account")
+    void suspend_account() {
+        Account suspended = account.suspend();
+
+        assertEquals(AccountStatus.SUSPENDED, suspended.status());
+        assertEquals(1L, suspended.version());
+    }
+
+    @Test
+    @DisplayName("Suspend already suspended account returns same")
+    void suspend_alreadySuspended() {
+        Account suspended = account.suspend();
+        Account reSuspended = suspended.suspend();
+
+        assertEquals(suspended, reSuspended);
+    }
+
+    @Test
+    @DisplayName("Suspend closed account throws exception")
+    void suspend_closedAccount_throwsException() {
+        Account closed = account.close();
+
+        assertThrows(IllegalStateException.class, closed::suspend);
+    }
+
+    @Test
     @DisplayName("Activate account")
     void activate_account() {
         Account frozen = account.freeze();
@@ -125,6 +181,50 @@ class AccountTest {
 
         assertEquals(AccountStatus.ACTIVE, activated.status());
         assertEquals(2L, activated.version());
+    }
+
+    @Test
+    @DisplayName("Activate suspended account")
+    void activate_suspendedAccount() {
+        Account suspended = account.suspend();
+        Account activated = suspended.activate();
+
+        assertEquals(AccountStatus.ACTIVE, activated.status());
+    }
+
+    @Test
+    @DisplayName("Activate dormant account")
+    void activate_dormantAccount() {
+        Account dormant = account.markDormant();
+        Account activated = dormant.activate();
+
+        assertEquals(AccountStatus.ACTIVE, activated.status());
+    }
+
+    @Test
+    @DisplayName("Activate already active account returns same")
+    void activate_alreadyActive() {
+        Account activated = account.activate();
+
+        assertEquals(account, activated);
+    }
+
+    @Test
+    @DisplayName("Mark account dormant")
+    void markDormant_account() {
+        Account dormant = account.markDormant();
+
+        assertEquals(AccountStatus.DORMANT, dormant.status());
+        assertEquals(1L, dormant.version());
+    }
+
+    @Test
+    @DisplayName("Mark already dormant account returns same")
+    void markDormant_alreadyDormant() {
+        Account dormant = account.markDormant();
+        Account reDormant = dormant.markDormant();
+
+        assertEquals(dormant, reDormant);
     }
 
     @Test
@@ -168,13 +268,10 @@ class AccountTest {
     @DisplayName("Is overdrawn - always false with current design")
     void isOverdrawn() {
         Account withBalance = account.deposit(Money.of("100.00", USD));
-        Account zeroBalance = account;
-
-        // Withdraw exactly the balance
         Account exactlyZero = withBalance.withdraw(Money.of("100.00", USD));
 
         assertFalse(withBalance.isOverdrawn());
-        assertFalse(zeroBalance.isOverdrawn());
+        assertFalse(account.isOverdrawn());
         assertFalse(exactlyZero.isOverdrawn());
     }
 
@@ -182,10 +279,9 @@ class AccountTest {
     @DisplayName("Has positive balance")
     void hasPositiveBalance() {
         Account withBalance = account.deposit(Money.of("100.00", USD));
-        Account zeroBalance = account;
 
         assertTrue(withBalance.hasPositiveBalance());
-        assertFalse(zeroBalance.hasPositiveBalance());
+        assertFalse(account.hasPositiveBalance());
     }
 
     @Test
@@ -201,7 +297,9 @@ class AccountTest {
 
         assertTrue(str.contains(accountId.value()));
         assertTrue(str.contains("John Doe"));
-        assertTrue(str.contains("$ 0.00"));
+        // Money.format() uses getCurrencyCode() — "USD 0.00", not "$ 0.00"
+        assertTrue(str.contains("USD"));
+        assertTrue(str.contains("0.00"));
         assertTrue(str.contains("ACTIVE"));
     }
 

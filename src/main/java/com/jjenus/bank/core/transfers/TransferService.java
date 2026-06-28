@@ -7,18 +7,73 @@ import com.jjenus.bank.core.transactions.Transaction;
 import com.jjenus.bank.core.transactions.TransactionId;
 import java.util.List;
 
+/**
+ * Application service / command handler for transfer operations.
+ *
+ * <p>All methods are stateless and pure. No persistence or event publishing happens
+ * here; that is the responsibility of the calling application layer, which receives
+ * structured {@link TransferEvent} objects to publish downstream.
+ */
 public final class TransferService {
 
     private TransferService() {}
 
+    // ── Result records ────────────────────────────────────────────────────────
+
+    /**
+     * Result of a successfully executed transfer.
+     *
+     * <p>{@code domainEvents} contains structured {@link TransferEvent} objects
+     * (replacing the previous {@code List<String>}) that the application layer
+     * should publish to the event bus / event store after persisting account and
+     * transaction state.
+     */
     public record TransferExecutionResult(
         Transfer transfer,
         Account updatedFromAccount,
         Account updatedToAccount,
         Transaction debitTransaction,
         Transaction creditTransaction,
-        List<String> events
-    ) {}
+        List<TransferEvent> domainEvents
+    ) {
+        /**
+         * Convenience accessor kept for backward compatibility with callers that
+         * previously iterated {@code events()} as strings.
+         *
+         * @deprecated Use {@link #domainEvents()} for typed event handling.
+         */
+        @Deprecated(since = "1.1.0", forRemoval = true)
+        public List<String> events() {
+            return domainEvents.stream()
+                .map(e -> e.getClass().getSimpleName() + ": " + e.transferId().value())
+                .toList();
+        }
+    }
+
+    /**
+     * Result of a successful transfer reversal.
+     *
+     * <p>{@code updatedReceiverAccount} is the original recipient — debited back.
+     * {@code updatedSenderAccount} is the original sender — credited back.
+     */
+    public record ReversalResult(
+        Transfer reversedTransfer,
+        Account updatedReceiverAccount,
+        Account updatedSenderAccount,
+        Transaction reversalDebitTransaction,
+        Transaction reversalCreditTransaction,
+        List<TransferEvent> domainEvents
+    ) {
+        /** @deprecated Use {@link #domainEvents()} for typed event handling. */
+        @Deprecated(since = "1.1.0", forRemoval = true)
+        public List<String> events() {
+            return domainEvents.stream()
+                .map(e -> e.getClass().getSimpleName() + ": " + e.transferId().value())
+                .toList();
+        }
+    }
+
+    // ── Execute transfer ──────────────────────────────────────────────────────
 
     public static Result<TransferExecutionResult> executeTransfer(
         Account fromAccount,
@@ -39,7 +94,16 @@ public final class TransferService {
                 command.reference()
             );
 
-            // 3. Process withdrawal from source account
+            // 3. Emit: transfer initiated
+            TransferEvent initiated = TransferEvent.transferInitiated(
+                transfer.id(),
+                command.fromAccountId(),
+                command.toAccountId(),
+                command.amount(),
+                command.reference()
+            );
+
+            // 4. Process withdrawal from source account
             Account updatedFrom = fromAccount.withdraw(command.amount());
             Transaction debitTransaction = Transaction.createTransferOut(
                 TransactionId.generate(),
@@ -47,13 +111,20 @@ public final class TransferService {
                 command.amount(),
                 updatedFrom.balance(),
                 command.reference(),
-                null  // Will be updated after credit transaction is created
+                null  // linked after credit transaction is created
             );
 
-            // 4. Mark transfer as processing
+            // 5. Mark transfer as processing
             transfer = transfer.markProcessing(debitTransaction.id());
 
-            // 5. Process deposit to target account
+            TransferEvent debited = TransferEvent.transferDebited(
+                transfer.id(),
+                command.fromAccountId(),
+                command.amount(),
+                debitTransaction.id()
+            );
+
+            // 6. Process deposit to target account
             Account updatedTo = toAccount.deposit(command.amount());
             Transaction creditTransaction = Transaction.createTransferIn(
                 TransactionId.generate(),
@@ -64,7 +135,7 @@ public final class TransferService {
                 debitTransaction.id().value()
             );
 
-            // 6. Update debit transaction with related transaction ID
+            // 7. Link debit transaction to its credit counterpart
             debitTransaction = new Transaction(
                 debitTransaction.id(),
                 debitTransaction.accountId(),
@@ -74,19 +145,25 @@ public final class TransferService {
                 debitTransaction.description(),
                 debitTransaction.reference(),
                 debitTransaction.timestamp(),
-                creditTransaction.id().value(),  // Link to credit transaction
+                creditTransaction.id().value(),
                 debitTransaction.metadata()
             );
 
-            // 7. Complete the transfer
+            TransferEvent credited = TransferEvent.transferCredited(
+                transfer.id(),
+                command.toAccountId(),
+                command.amount(),
+                creditTransaction.id()
+            );
+
+            // 8. Complete the transfer
             transfer = transfer.complete(creditTransaction.id());
 
-            // 8. Collect events
-            List<String> events = List.of(
-                "Transfer initiated: " + command.transferId().value(),
-                "Debit transaction created: " + debitTransaction.id().value(),
-                "Credit transaction created: " + creditTransaction.id().value(),
-                "Transfer completed successfully"
+            TransferEvent completed = TransferEvent.transferCompleted(
+                transfer.id(),
+                command.fromAccountId(),
+                command.toAccountId(),
+                command.amount()
             );
 
             return Result.success(new TransferExecutionResult(
@@ -95,7 +172,7 @@ public final class TransferService {
                 updatedTo,
                 debitTransaction,
                 creditTransaction,
-                events
+                List.of(initiated, debited, credited, completed)
             ));
 
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -103,10 +180,23 @@ public final class TransferService {
         }
     }
 
-    public static Result<Transfer> reverseTransfer(
+    // ── Reverse transfer ──────────────────────────────────────────────────────
+
+    /**
+     * Reverses a completed transfer.
+     *
+     * <p>Money flow: debit {@code receiverAccount} (original toAccount),
+     * credit {@code senderAccount} (original fromAccount).
+     *
+     * @param transfer        the completed transfer to reverse
+     * @param receiverAccount the account that originally received the money (will be debited)
+     * @param senderAccount   the account that originally sent the money (will be credited)
+     * @param reason          mandatory reason for the reversal
+     */
+    public static Result<ReversalResult> reverseTransfer(
         Transfer transfer,
-        Account fromAccount,  // The account that received the money (to be debited back)
-        Account toAccount,    // The account that sent the money (to be credited back)
+        Account receiverAccount,
+        Account senderAccount,
         String reason
     ) {
         try {
@@ -118,15 +208,66 @@ public final class TransferService {
                 return Result.failure("Cannot reverse zero-amount transfer");
             }
 
-            // Reverse the transfer
+            if (!receiverAccount.hasSufficientFunds(transfer.amount())) {
+                return Result.failure(String.format(
+                    "Receiver account has insufficient funds for reversal. Balance: %s, Required: %s",
+                    receiverAccount.balance().format(),
+                    transfer.amount().format()
+                ));
+            }
+
+            // 1. Debit money back from the original receiver
+            Account updatedReceiver = receiverAccount.withdraw(transfer.amount());
+            Transaction reversalDebit = Transaction.createReversal(
+                TransactionId.generate(),
+                receiverAccount.id(),
+                transfer.amount(),
+                updatedReceiver.balance(),
+                transfer.reference(),
+                transfer.creditTransactionId() != null
+                    ? transfer.creditTransactionId().value()
+                    : null
+            );
+
+            // 2. Credit money back to the original sender
+            Account updatedSender = senderAccount.deposit(transfer.amount());
+            Transaction reversalCredit = Transaction.createRefund(
+                TransactionId.generate(),
+                senderAccount.id(),
+                transfer.amount(),
+                updatedSender.balance(),
+                transfer.reference(),
+                reversalDebit.id().value()
+            );
+
+            // 3. Mark the transfer as reversed
             Transfer reversed = transfer.reverse(reason);
 
-            return Result.success(reversed);
+            TransferEvent reversedEvent = TransferEvent.transferReversed(
+                transfer.id(),
+                transfer.fromAccountId(),
+                transfer.toAccountId(),
+                transfer.amount(),
+                reason,
+                reversalDebit.id(),
+                reversalCredit.id()
+            );
+
+            return Result.success(new ReversalResult(
+                reversed,
+                updatedReceiver,
+                updatedSender,
+                reversalDebit,
+                reversalCredit,
+                List.of(reversedEvent)
+            ));
 
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Result.failure(e.getMessage());
         }
     }
+
+    // ── Cancel transfer ───────────────────────────────────────────────────────
 
     public static Result<Transfer> cancelTransfer(Transfer transfer, String reason) {
         try {
@@ -142,9 +283,9 @@ public final class TransferService {
         }
     }
 
-    // Validation methods
+    // ── Validation ────────────────────────────────────────────────────────────
+
     private static void validateAccounts(Account fromAccount, Account toAccount, Money amount) {
-        // Check if accounts are active
         if (!fromAccount.status().canTransact()) {
             throw new IllegalStateException(
                 "Source account is not active: " + fromAccount.status()
@@ -157,73 +298,61 @@ public final class TransferService {
             );
         }
 
-        // Check currency compatibility
         if (!fromAccount.getCurrency().equals(toAccount.getCurrency())) {
-            throw new IllegalArgumentException(
-                String.format("Currency mismatch: %s vs %s",
-                    fromAccount.getCurrency(), toAccount.getCurrency())
-            );
+            throw new IllegalArgumentException(String.format(
+                "Currency mismatch: %s vs %s",
+                fromAccount.getCurrency(), toAccount.getCurrency()
+            ));
         }
 
         if (!amount.currency().equals(fromAccount.getCurrency())) {
-            throw new IllegalArgumentException(
-                String.format("Transfer currency %s does not match source account currency %s",
-                    amount.currency(), fromAccount.getCurrency())
-            );
+            throw new IllegalArgumentException(String.format(
+                "Transfer currency %s does not match source account currency %s",
+                amount.currency(), fromAccount.getCurrency()
+            ));
         }
 
-        // Check sufficient funds
         if (!fromAccount.hasSufficientFunds(amount)) {
-            throw new IllegalStateException(
-                String.format("Insufficient funds in source account. Balance: %s, Required: %s",
-                    fromAccount.balance().format(), amount.format())
-            );
+            throw new IllegalStateException(String.format(
+                "Insufficient funds in source account. Balance: %s, Required: %s",
+                fromAccount.balance().format(), amount.format()
+            ));
         }
-
-        // Check transfer limits (example: max $10,000 per transfer) not realistic right now
-//        Money maxTransfer = Money.of("10000.00", amount.currency());
-//        if (amount.isGreaterThan(maxTransfer)) {
-//            throw new IllegalArgumentException(
-//                String.format("Transfer amount %s exceeds maximum limit of %s",
-//                    amount.format(), maxTransfer.format())
-//            );
-//        }
     }
 
-    // Batch transfer validation
+    // ── Batch validation ──────────────────────────────────────────────────────
+
     public static Result<Boolean> validateBatchTransfer(
-        List<Account> sourceAccounts,
+        java.util.List<Account> sourceAccounts,
         Account targetAccount,
         Money totalAmount
     ) {
         try {
-            // Check total amount
             Money totalSourceBalance = sourceAccounts.stream()
                 .map(Account::balance)
                 .reduce(Money.zero(totalAmount.currency()), Money::add);
 
             if (!totalSourceBalance.isGreaterThanOrEqual(totalAmount)) {
-                return Result.failure(
-                    String.format("Total source balance %s is insufficient for transfer amount %s",
-                        totalSourceBalance.format(), totalAmount.format())
-                );
+                return Result.failure(String.format(
+                    "Total source balance %s is insufficient for transfer amount %s",
+                    totalSourceBalance.format(), totalAmount.format()
+                ));
             }
 
-            // Check all accounts are active
             for (Account account : sourceAccounts) {
                 if (!account.status().canTransact()) {
-                    return Result.failure(
-                        String.format("Account %s is not active: %s",
-                            account.id().value(), account.status())
-                    );
+                    return Result.failure(String.format(
+                        "Account %s is not active: %s",
+                        account.id().value(), account.status()
+                    ));
                 }
             }
 
             if (!targetAccount.status().canDeposit()) {
-                return Result.failure(
-                    String.format("Target account %s cannot receive deposits: %s",
-                        targetAccount.id().value(), targetAccount.status())
-                );
+                return Result.failure(String.format(
+                    "Target account %s cannot receive deposits: %s",
+                    targetAccount.id().value(), targetAccount.status()
+                ));
             }
 
             return Result.success(true);
@@ -233,7 +362,8 @@ public final class TransferService {
         }
     }
 
-    // Utility method to get transfer status
+    // ── Utility ───────────────────────────────────────────────────────────────
+
     public static String getTransferSummary(Transfer transfer) {
         return String.format(
             "Transfer %s: %s → %s, Amount: %s, Status: %s, Created: %s",

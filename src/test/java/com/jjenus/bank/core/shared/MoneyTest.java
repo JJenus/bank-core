@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class MoneyTest {
     private static final Currency USD = Currency.getInstance("USD");
     private static final Currency EUR = Currency.getInstance("EUR");
+    private static final Currency NGN = Currency.getInstance("NGN");
 
     @Test
     @DisplayName("Money creation with valid values")
@@ -146,13 +147,33 @@ class MoneyTest {
     }
 
     @Test
-    @DisplayName("Format money")
-    void format_money() {
-        Money money = Money.of("1234.56", USD);
+    @DisplayName("Format uses currency code, not locale-sensitive symbol")
+    void format_usesCurrencyCode() {
+        Money usd = Money.of("1234.56", USD);
+        Money eur = Money.of("999.00", EUR);
+        Money ngn = Money.of("50000.00", NGN);
+
+        // format() uses getCurrencyCode() — locale-independent, always the ISO 4217 code
+        assertTrue(usd.format().contains("USD"));
+        assertTrue(usd.format().contains("1234.56"));
+
+        assertTrue(eur.format().contains("EUR"));
+        assertTrue(eur.format().contains("999.00"));
+
+        assertTrue(ngn.format().contains("NGN"));
+        assertTrue(ngn.format().contains("50000.00"));
+    }
+
+    @Test
+    @DisplayName("Format does not use locale-sensitive currency symbol")
+    void format_notLocaleSensitive() {
+        // getCurrencyCode() always returns "USD", never "$" or "US$" depending on JVM locale
+        Money money = Money.of("100.00", USD);
         String formatted = money.format();
 
-        assertTrue(formatted.contains("$"));
-        assertTrue(formatted.contains("1234.56"));
+        assertFalse(formatted.contains("$"),
+            "format() should use currency code (USD), not locale-sensitive symbol ($)");
+        assertTrue(formatted.contains("USD"));
     }
 
     @Test
@@ -165,5 +186,38 @@ class MoneyTest {
     @DisplayName("Money with null currency throws exception")
     void createMoney_withNullCurrency_throwsException() {
         assertThrows(IllegalArgumentException.class, () -> new Money(new BigDecimal("100.00"), null));
+    }
+
+    @Test
+    @DisplayName("Is less than")
+    void isLessThan() {
+        Money smaller = Money.of("50.00", USD);
+        Money larger = Money.of("100.00", USD);
+
+        assertTrue(smaller.isLessThan(larger));
+        assertFalse(larger.isLessThan(smaller));
+        assertFalse(smaller.isLessThan(smaller));
+    }
+
+    @Test
+    @DisplayName("Is less than or equal")
+    void isLessThanOrEqual() {
+        Money smaller = Money.of("50.00", USD);
+        Money larger = Money.of("100.00", USD);
+
+        assertTrue(smaller.isLessThanOrEqual(larger));
+        assertTrue(smaller.isLessThanOrEqual(smaller));
+        assertFalse(larger.isLessThanOrEqual(smaller));
+    }
+
+    @Test
+    @DisplayName("Is greater than")
+    void isGreaterThan() {
+        Money larger = Money.of("100.00", USD);
+        Money smaller = Money.of("50.00", USD);
+
+        assertTrue(larger.isGreaterThan(smaller));
+        assertFalse(smaller.isGreaterThan(larger));
+        assertFalse(larger.isGreaterThan(larger));
     }
 }

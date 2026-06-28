@@ -44,7 +44,8 @@ public final class AccountFactory {
         return CommandApplier.apply(account, command);
     }
 
-    // Visitor-like implementation for events
+    // ── Event applier ─────────────────────────────────────────────────────────
+
     private static class EventApplier {
         static Account apply(Account current, AccountEvent event) {
             if (event instanceof AccountEvent.AccountCreated created) {
@@ -55,8 +56,12 @@ public final class AccountFactory {
                 return handleMoneyWithdrawn(current, withdrawn);
             } else if (event instanceof AccountEvent.AccountFrozen) {
                 return handleAccountFrozen(current);
+            } else if (event instanceof AccountEvent.AccountSuspended) {
+                return handleAccountSuspended(current);
             } else if (event instanceof AccountEvent.AccountActivated) {
                 return handleAccountActivated(current);
+            } else if (event instanceof AccountEvent.AccountMarkedDormant) {
+                return handleAccountMarkedDormant(current);
             } else if (event instanceof AccountEvent.AccountClosed) {
                 return handleAccountClosed(current);
             }
@@ -83,9 +88,19 @@ public final class AccountFactory {
             return current.freeze();
         }
 
+        private static Account handleAccountSuspended(Account current) {
+            validateAccount(current);
+            return current.suspend();
+        }
+
         private static Account handleAccountActivated(Account current) {
             validateAccount(current);
             return current.activate();
+        }
+
+        private static Account handleAccountMarkedDormant(Account current) {
+            validateAccount(current);
+            return current.markDormant();
         }
 
         private static Account handleAccountClosed(Account current) {
@@ -100,7 +115,8 @@ public final class AccountFactory {
         }
     }
 
-    // Visitor-like implementation for commands
+    // ── Command applier ───────────────────────────────────────────────────────
+
     private static class CommandApplier {
         static Account apply(Account account, AccountCommand command) {
             if (command instanceof AccountCommand.DepositMoney deposit) {
@@ -109,6 +125,12 @@ public final class AccountFactory {
                 return handleWithdrawal(account, withdrawal);
             } else if (command instanceof AccountCommand.FreezeAccount) {
                 return handleFreeze(account);
+            } else if (command instanceof AccountCommand.SuspendAccount) {
+                return handleSuspend(account);
+            } else if (command instanceof AccountCommand.ActivateAccount) {
+                return handleActivate(account);
+            } else if (command instanceof AccountCommand.MarkAccountDormant) {
+                return handleMarkDormant(account);
             } else if (command instanceof AccountCommand.CloseAccount) {
                 return handleClose(account);
             }
@@ -127,6 +149,18 @@ public final class AccountFactory {
 
         private static Account handleFreeze(Account account) {
             return account.freeze();
+        }
+
+        private static Account handleSuspend(Account account) {
+            return account.suspend();
+        }
+
+        private static Account handleActivate(Account account) {
+            return account.activate();
+        }
+
+        private static Account handleMarkDormant(Account account) {
+            return account.markDormant();
         }
 
         private static Account handleClose(Account account) {

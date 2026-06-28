@@ -96,6 +96,58 @@ public sealed interface AccountCommand {
         }
     }
 
+    record SuspendAccount(
+        AccountId accountId,
+        String reason,
+        Instant timestamp
+    ) implements AccountCommand {
+
+        public SuspendAccount {
+            if (reason == null || reason.isBlank()) {
+                throw new IllegalArgumentException("Reason cannot be blank");
+            }
+            if (timestamp == null) {
+                timestamp = Instant.now();
+            }
+        }
+
+        public static SuspendAccount now(AccountId accountId, String reason) {
+            return new SuspendAccount(accountId, reason, Instant.now());
+        }
+    }
+
+    record ActivateAccount(
+        AccountId accountId,
+        Instant timestamp
+    ) implements AccountCommand {
+
+        public ActivateAccount {
+            if (timestamp == null) {
+                timestamp = Instant.now();
+            }
+        }
+
+        public static ActivateAccount now(AccountId accountId) {
+            return new ActivateAccount(accountId, Instant.now());
+        }
+    }
+
+    record MarkAccountDormant(
+        AccountId accountId,
+        Instant timestamp
+    ) implements AccountCommand {
+
+        public MarkAccountDormant {
+            if (timestamp == null) {
+                timestamp = Instant.now();
+            }
+        }
+
+        public static MarkAccountDormant now(AccountId accountId) {
+            return new MarkAccountDormant(accountId, Instant.now());
+        }
+    }
+
     record CloseAccount(
         AccountId accountId,
         String reason,

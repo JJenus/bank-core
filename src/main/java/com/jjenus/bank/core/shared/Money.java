@@ -87,7 +87,7 @@ public record Money(BigDecimal amount, Currency currency) {
     }
 
     public String format() {
-        return String.format("%s %.2f", currency.getSymbol(), amount);
+        return String.format("%s %.2f", currency.getCurrencyCode(), amount);
     }
 
     @Override

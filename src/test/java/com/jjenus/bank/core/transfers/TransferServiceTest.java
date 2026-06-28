@@ -57,7 +57,7 @@ class TransferServiceTest {
 
         assertNotNull(execution.debitTransaction());
         assertNotNull(execution.creditTransaction());
-        assertEquals(4, execution.events().size());
+        assertEquals(4, execution.domainEvents().size());
     }
 
     @Test
@@ -96,11 +96,9 @@ class TransferServiceTest {
     }
 
     @Test
-    @DisplayName("Transfer to account that cannot receive deposits fails")
+    @DisplayName("Transfer to closed account fails")
     void executeTransfer_toClosedAccount() {
-        // First withdraw all money to close the account
-        Account closedAccount = Account.create(AccountId.generate(), "Closed Account", USD)
-                .close();  // New account with zero balance can be closed
+        Account closedAccount = Account.create(AccountId.generate(), "Closed Account", USD).close();
 
         TransferId transferId = TransferId.generate();
         Money transferAmount = Money.of("100.00", USD);
@@ -136,6 +134,25 @@ class TransferServiceTest {
     }
 
     @Test
+    @DisplayName("Transfer to DORMANT account succeeds (DORMANT canDeposit)")
+    void executeTransfer_toDormantAccount_succeeds() {
+        Account dormantTo = toAccount.markDormant();
+        TransferId transferId = TransferId.generate();
+        Money transferAmount = Money.of("100.00", USD);
+
+        TransferCommand.InitiateTransfer command = TransferCommand.InitiateTransfer.now(
+                transferId, fromId, dormantTo.id(), transferAmount, "Payment", "INV006"
+        );
+
+        Result<TransferService.TransferExecutionResult> result =
+                TransferService.executeTransfer(fromAccount, dormantTo, command);
+
+        assertTrue(result.isSuccess());
+        assertEquals(0, result.getOrThrow().updatedToAccount().balance().amount()
+                .compareTo(Money.of("600.00", USD).amount()));
+    }
+
+    @Test
     @DisplayName("Cancel pending transfer")
     void cancelTransfer_pending() {
         Transfer transfer = Transfer.initiate(
@@ -167,7 +184,7 @@ class TransferServiceTest {
     }
 
     @Test
-    @DisplayName("Reverse completed transfer")
+    @DisplayName("Reverse completed transfer - moves money back and returns ReversalResult")
     void reverseTransfer_completed() {
         Transfer transfer = Transfer.initiate(
                 TransferId.generate(), fromId, toId,
@@ -176,12 +193,46 @@ class TransferServiceTest {
         transfer = transfer.markProcessing(null);
         transfer = transfer.complete(null);
 
-        Result<Transfer> result = TransferService.reverseTransfer(
+        Result<TransferService.ReversalResult> result = TransferService.reverseTransfer(
                 transfer, toAccount, fromAccount, "Wrong amount"
         );
 
         assertTrue(result.isSuccess());
-        assertEquals(TransferStatus.REVERSED, result.getOrThrow().status());
+        TransferService.ReversalResult reversal = result.getOrThrow();
+
+        assertEquals(TransferStatus.REVERSED, reversal.reversedTransfer().status());
+
+        // Receiver (toAccount) should have money debited back: 500 - 100 = 400
+        assertEquals(0, reversal.updatedReceiverAccount().balance().amount()
+                .compareTo(Money.of("400.00", USD).amount()));
+
+        // Sender (fromAccount) should have money credited back: 1000 + 100 = 1100
+        assertEquals(0, reversal.updatedSenderAccount().balance().amount()
+                .compareTo(Money.of("1100.00", USD).amount()));
+
+        assertNotNull(reversal.reversalDebitTransaction());
+        assertNotNull(reversal.reversalCreditTransaction());
+        assertEquals(4, reversal.domainEvents().size());
+    }
+
+    @Test
+    @DisplayName("Reverse completed transfer - receiver insufficient funds fails")
+    void reverseTransfer_receiverInsufficientFunds_fails() {
+        // Receiver has 0 balance but transfer amount is 100
+        Account brokenReceiver = Account.create(AccountId.generate(), "Broke Receiver", USD);
+        Transfer transfer = Transfer.initiate(
+                TransferId.generate(), fromId, brokenReceiver.id(),
+                Money.of("100.00", USD), "Test", "REF007"
+        );
+        transfer = transfer.markProcessing(null);
+        transfer = transfer.complete(null);
+
+        Result<TransferService.ReversalResult> result = TransferService.reverseTransfer(
+                transfer, brokenReceiver, fromAccount, "Reversal"
+        );
+
+        assertTrue(result.isFailure());
+        assertTrue(result.getErrorOrNull().contains("insufficient funds"));
     }
 
     @Test
@@ -192,7 +243,7 @@ class TransferServiceTest {
                 Money.of("100.00", USD), "Test", "REF004"
         );
 
-        Result<Transfer> result = TransferService.reverseTransfer(
+        Result<TransferService.ReversalResult> result = TransferService.reverseTransfer(
                 transfer, toAccount, fromAccount, "Reason"
         );
 
@@ -218,7 +269,7 @@ class TransferServiceTest {
         );
 
         assertTrue(result.isSuccess());
-        assertTrue(result.getOrThrow());  // Should be true
+        assertTrue(result.getOrThrow());
     }
 
     @Test
@@ -250,7 +301,7 @@ class TransferServiceTest {
                         .deposit(Money.of("500.00", USD)),
                 Account.create(AccountId.generate(), "Source2", USD)
                         .deposit(Money.of("500.00", USD))
-                        .freeze()  // This account is frozen
+                        .freeze()
         );
 
         Account targetAccount = Account.create(AccountId.generate(), "Target", USD);
@@ -274,9 +325,7 @@ class TransferServiceTest {
                         .deposit(Money.of("500.00", USD))
         );
 
-        Account targetAccount = Account.create(AccountId.generate(), "Target", USD)
-                .close();  // Closed account
-
+        Account targetAccount = Account.create(AccountId.generate(), "Target", USD).close();
         Money totalAmount = Money.of("800.00", USD);
 
         Result<Boolean> result = TransferService.validateBatchTransfer(

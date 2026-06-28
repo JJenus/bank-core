@@ -9,7 +9,8 @@ public sealed interface AccountEvent extends DomainEvent {
 
     AccountId accountId();
 
-    // Factory methods for creating events
+    // ── Factory methods ───────────────────────────────────────────────────────
+
     static AccountCreated accountCreated(AccountId accountId, String ownerName, String currency) {
         return new AccountCreated(Id.random(), Instant.now(), accountId, ownerName, currency);
     }
@@ -26,11 +27,24 @@ public sealed interface AccountEvent extends DomainEvent {
         return new AccountFrozen(Id.random(), Instant.now(), accountId, reason);
     }
 
+    static AccountSuspended accountSuspended(AccountId accountId, String reason) {
+        return new AccountSuspended(Id.random(), Instant.now(), accountId, reason);
+    }
+
+    static AccountActivated accountActivated(AccountId accountId) {
+        return new AccountActivated(Id.random(), Instant.now(), accountId);
+    }
+
+    static AccountMarkedDormant accountMarkedDormant(AccountId accountId) {
+        return new AccountMarkedDormant(Id.random(), Instant.now(), accountId);
+    }
+
     static AccountClosed accountClosed(AccountId accountId, String reason) {
         return new AccountClosed(Id.random(), Instant.now(), accountId, reason);
     }
 
-    // Event implementations
+    // ── Event records ─────────────────────────────────────────────────────────
+
     record AccountCreated(
         Id<DomainEvent> eventId,
         Instant occurredOn,
@@ -62,7 +76,7 @@ public sealed interface AccountEvent extends DomainEvent {
         String reason
     ) implements AccountEvent {}
 
-    record AccountClosed(
+    record AccountSuspended(
         Id<DomainEvent> eventId,
         Instant occurredOn,
         AccountId accountId,
@@ -73,5 +87,18 @@ public sealed interface AccountEvent extends DomainEvent {
         Id<DomainEvent> eventId,
         Instant occurredOn,
         AccountId accountId
+    ) implements AccountEvent {}
+
+    record AccountMarkedDormant(
+        Id<DomainEvent> eventId,
+        Instant occurredOn,
+        AccountId accountId
+    ) implements AccountEvent {}
+
+    record AccountClosed(
+        Id<DomainEvent> eventId,
+        Instant occurredOn,
+        AccountId accountId,
+        String reason
     ) implements AccountEvent {}
 }

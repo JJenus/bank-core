@@ -41,15 +41,21 @@ public record Account(
         );
     }
 
+    /**
+     * Credit money to this account.
+     * Allowed for ACTIVE and DORMANT accounts (canDeposit).
+     * A DORMANT account that receives a deposit implicitly reactivates via AccountActivated event —
+     * the caller (AccountService / event applier) is responsible for emitting that event.
+     */
     public Account deposit(Money amount) {
-        validateActive();
+        validateCanDeposit();
         validatePositiveAmount(amount);
         validateSameCurrency(amount);
 
         Instant now = Instant.now();
         return new Account(
             id,
-                customerId,
+            customerId,
             balance.add(amount),
             status,
             createdAt,
@@ -58,8 +64,12 @@ public record Account(
         );
     }
 
+    /**
+     * Debit money from this account.
+     * Only ACTIVE accounts can withdraw (canWithdraw).
+     */
     public Account withdraw(Money amount) {
-        validateActive();
+        validateCanWithdraw();
         validatePositiveAmount(amount);
         validateSameCurrency(amount);
         validateSufficientFunds(amount);
@@ -94,6 +104,24 @@ public record Account(
         );
     }
 
+    public Account suspend() {
+        if (status == AccountStatus.SUSPENDED) {
+            return this;
+        }
+        validateNotTerminal();
+
+        Instant now = Instant.now();
+        return new Account(
+            id,
+            customerId,
+            balance,
+            AccountStatus.SUSPENDED,
+            createdAt,
+            now,
+            version + 1
+        );
+    }
+
     public Account activate() {
         if (status == AccountStatus.ACTIVE) {
             return this;
@@ -106,6 +134,24 @@ public record Account(
             customerId,
             balance,
             AccountStatus.ACTIVE,
+            createdAt,
+            now,
+            version + 1
+        );
+    }
+
+    public Account markDormant() {
+        if (status == AccountStatus.DORMANT) {
+            return this;
+        }
+        validateNotTerminal();
+
+        Instant now = Instant.now();
+        return new Account(
+            id,
+            customerId,
+            balance,
+            AccountStatus.DORMANT,
             createdAt,
             now,
             version + 1
@@ -138,11 +184,28 @@ public record Account(
         return balance.isGreaterThanOrEqual(amount);
     }
 
-    // Validation methods
-    private void validateActive() {
-        if (!status.canTransact()) {
+    // ── Validation ────────────────────────────────────────────────────────────
+
+    /**
+     * Used for deposits: ACTIVE and DORMANT are both allowed.
+     */
+    private void validateCanDeposit() {
+        if (!status.canDeposit()) {
             throw new IllegalStateException(
-                String.format("Account is %s and cannot transact", status)
+                String.format("Account is %s and cannot receive deposits: %s",
+                    status, status.getDescription())
+            );
+        }
+    }
+
+    /**
+     * Used for withdrawals: only ACTIVE is allowed.
+     */
+    private void validateCanWithdraw() {
+        if (!status.canWithdraw()) {
+            throw new IllegalStateException(
+                String.format("Account is %s and cannot process withdrawals: %s",
+                    status, status.getDescription())
             );
         }
     }
@@ -179,7 +242,8 @@ public record Account(
         }
     }
 
-    // Helper methods
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     public boolean isOverdrawn() {
         return balance.isNegative();
     }

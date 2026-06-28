@@ -1,6 +1,6 @@
 package com.jjenus.bank.core.transfers;
 
-enum TransferStatus {
+public enum TransferStatus {
     PENDING("Transfer is pending execution"),
     PROCESSING("Transfer is being processed"),
     COMPLETED("Transfer completed successfully"),

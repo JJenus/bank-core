@@ -13,8 +13,8 @@ public record Transaction(
     String description,
     String reference,
     Instant timestamp,
-    String relatedTransactionId,  // For linking transfers, refunds, etc.
-    String metadata              // JSON string for additional data
+    String relatedTransactionId,  // For linking transfers, refunds, reversals, etc.
+    String metadata               // JSON string for additional data
 ) {
 
     public Transaction {
@@ -42,7 +42,8 @@ public record Transaction(
         }
     }
 
-    // Factory methods
+    // ── Factory methods ───────────────────────────────────────────────────────
+
     public static Transaction createDeposit(
         TransactionId id,
         AccountId accountId,
@@ -150,7 +151,73 @@ public record Transaction(
         );
     }
 
-    // Helper methods
+    public static Transaction createInterest(
+        TransactionId id,
+        AccountId accountId,
+        Money amount,
+        Money balanceAfter,
+        String reference
+    ) {
+        return new Transaction(
+            id,
+            accountId,
+            TransactionType.INTEREST,
+            amount,           // Credit — positive
+            balanceAfter,
+            "Interest credited",
+            reference,
+            Instant.now(),
+            null,
+            null
+        );
+    }
+
+    public static Transaction createRefund(
+        TransactionId id,
+        AccountId accountId,
+        Money amount,
+        Money balanceAfter,
+        String reference,
+        String originalTransactionId
+    ) {
+        return new Transaction(
+            id,
+            accountId,
+            TransactionType.REFUND,
+            amount,           // Credit — positive
+            balanceAfter,
+            "Transaction refund",
+            reference,
+            Instant.now(),
+            originalTransactionId,
+            null
+        );
+    }
+
+    public static Transaction createReversal(
+        TransactionId id,
+        AccountId accountId,
+        Money amount,
+        Money balanceAfter,
+        String reference,
+        String originalTransactionId
+    ) {
+        return new Transaction(
+            id,
+            accountId,
+            TransactionType.REVERSAL,
+            amount.negate(),  // Debit — negative
+            balanceAfter,
+            "Transaction reversal",
+            reference,
+            Instant.now(),
+            originalTransactionId,
+            null
+        );
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     public boolean isCredit() {
         return type.isCredit();
     }

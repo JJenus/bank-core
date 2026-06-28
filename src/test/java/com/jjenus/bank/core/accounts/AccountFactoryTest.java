@@ -74,22 +74,60 @@ class AccountFactoryTest {
     }
 
     @Test
-    @DisplayName("Reconstitute from events - account frozen and activated")
+    @DisplayName("Reconstitute from events - account frozen and activated via factory method")
     void reconstituteFromEvents_statusChanges() {
         AccountId id = AccountId.generate();
         List<AccountEvent> events = new ArrayList<>();
         events.add(AccountEvent.accountCreated(id, "John Doe", "USD"));
         events.add(AccountEvent.accountFrozen(id, "Suspicious activity"));
-        events.add(new AccountEvent.AccountActivated(
-            com.jjenus.bank.core.shared.Id.random(),
-            java.time.Instant.now(),
-            id
-        ));
+        events.add(AccountEvent.accountActivated(id));  // Use factory method, not manual construction
 
         Account account = AccountFactory.reconstituteFromEvents(id, events);
 
         assertEquals(id, account.id());
         assertEquals(AccountStatus.ACTIVE, account.status());
+    }
+
+    @Test
+    @DisplayName("Reconstitute from events - account suspended and reactivated")
+    void reconstituteFromEvents_suspendAndActivate() {
+        AccountId id = AccountId.generate();
+        List<AccountEvent> events = new ArrayList<>();
+        events.add(AccountEvent.accountCreated(id, "John Doe", "USD"));
+        events.add(AccountEvent.accountSuspended(id, "Regulatory hold"));
+        events.add(AccountEvent.accountActivated(id));
+
+        Account account = AccountFactory.reconstituteFromEvents(id, events);
+
+        assertEquals(AccountStatus.ACTIVE, account.status());
+    }
+
+    @Test
+    @DisplayName("Reconstitute from events - account marked dormant")
+    void reconstituteFromEvents_markDormant() {
+        AccountId id = AccountId.generate();
+        List<AccountEvent> events = new ArrayList<>();
+        events.add(AccountEvent.accountCreated(id, "John Doe", "USD"));
+        events.add(AccountEvent.accountMarkedDormant(id));
+
+        Account account = AccountFactory.reconstituteFromEvents(id, events);
+
+        assertEquals(AccountStatus.DORMANT, account.status());
+    }
+
+    @Test
+    @DisplayName("Reconstitute from events - dormant account can receive deposit")
+    void reconstituteFromEvents_dormantReceivesDeposit() {
+        AccountId id = AccountId.generate();
+        List<AccountEvent> events = new ArrayList<>();
+        events.add(AccountEvent.accountCreated(id, "John Doe", "USD"));
+        events.add(AccountEvent.accountMarkedDormant(id));
+        events.add(AccountEvent.moneyDeposited(id, Money.of("100.00", USD), "DEP001"));
+
+        Account account = AccountFactory.reconstituteFromEvents(id, events);
+
+        assertEquals(AccountStatus.DORMANT, account.status());
+        assertEquals(0, account.balance().amount().compareTo(new BigDecimal("100.0000")));
     }
 
     @Test
@@ -154,6 +192,41 @@ class AccountFactoryTest {
         Account updated = AccountFactory.applyCommand(account, command);
 
         assertEquals(AccountStatus.FROZEN, updated.status());
+    }
+
+    @Test
+    @DisplayName("Apply suspend command")
+    void applyCommand_suspend() {
+        Account account = Account.create(AccountId.generate(), "John Doe", USD);
+        AccountCommand.SuspendAccount command = AccountCommand.SuspendAccount.now(
+            account.id(), "Regulatory hold"
+        );
+
+        Account updated = AccountFactory.applyCommand(account, command);
+
+        assertEquals(AccountStatus.SUSPENDED, updated.status());
+    }
+
+    @Test
+    @DisplayName("Apply activate command")
+    void applyCommand_activate() {
+        Account account = Account.create(AccountId.generate(), "John Doe", USD).freeze();
+        AccountCommand.ActivateAccount command = AccountCommand.ActivateAccount.now(account.id());
+
+        Account updated = AccountFactory.applyCommand(account, command);
+
+        assertEquals(AccountStatus.ACTIVE, updated.status());
+    }
+
+    @Test
+    @DisplayName("Apply mark dormant command")
+    void applyCommand_markDormant() {
+        Account account = Account.create(AccountId.generate(), "John Doe", USD);
+        AccountCommand.MarkAccountDormant command = AccountCommand.MarkAccountDormant.now(account.id());
+
+        Account updated = AccountFactory.applyCommand(account, command);
+
+        assertEquals(AccountStatus.DORMANT, updated.status());
     }
 
     @Test
